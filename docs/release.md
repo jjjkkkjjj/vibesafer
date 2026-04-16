@@ -4,7 +4,44 @@
 
 ---
 
-## 手順
+## 手順（推奨: release.sh を使う）
+
+リポジトリルートにある `release.sh` を使うと、バージョン更新からタグ push まで一括で実行でき、途中で失敗した場合は自動的にロールバックされます。
+
+```bash
+./release.sh <version>
+# 例
+./release.sh 0.3.0
+```
+
+### スクリプトが行うこと
+
+| ステップ | 内容 |
+|---|---|
+| 1 | 作業ツリーのクリーン確認（未コミットの変更があればエラー終了） |
+| 2 | `Cargo.toml` の `version` を指定バージョンに更新 |
+| 3 | `./cargo-docker test` でテスト実行 |
+| 4 | `./cargo-docker clippy -- -D warnings` で lint |
+| 5 | `chore: bump version to vX.Y.Z` でコミット |
+| 6 | `vX.Y.Z` タグを作成 |
+| 7 | `main` ブランチと `vX.Y.Z` タグを `origin` へ push（タグ push が CI のトリガー） |
+
+### 失敗時のロールバック
+
+スクリプトは `trap EXIT` で任意のエラーを検知し、進行状況に応じてロールバックします。
+
+| 状態 | ロールバック内容 |
+|---|---|
+| リモートタグ push 済み | `git push origin :refs/tags/vX.Y.Z` でリモートタグを削除 |
+| ローカルタグ作成済み | `git tag -d vX.Y.Z` |
+| コミット済み | `git reset --soft HEAD~1` |
+| `Cargo.toml` 変更済み | `git checkout -- Cargo.toml` |
+
+---
+
+## 手順（手動）
+
+スクリプトを使わずに手動でリリースする場合は以下の手順に従います。
 
 ### 1. バージョンを更新
 
