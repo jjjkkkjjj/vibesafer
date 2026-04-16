@@ -2,8 +2,10 @@
 # release.sh — Tag, version-bump, and push a new release.
 #
 # Usage:
-#   ./release.sh <version>       # e.g. ./release.sh 0.3.0
+#   ./release.sh <version>           # release  e.g. ./release.sh 0.3.0
+#   ./release.sh revert <version>    # revert   e.g. ./release.sh revert 0.3.0
 #
+# === release ===
 # What it does:
 #   1. Validates the working tree is clean
 #   2. Updates version in Cargo.toml
@@ -14,24 +16,82 @@
 #
 # On any failure before the tag push, all local changes are rolled back.
 # If the tag has already been pushed to origin, it is deleted from remote too.
+#
+# === revert ===
+# Undoes a release that was already pushed (e.g. CI failed after push).
+# What it does:
+#   1. Deletes the remote tag
+#   2. Deletes the local tag
+#   3. Reverts the version-bump commit (git revert) and pushes main
 
 set -euo pipefail
 
-# ── Argument validation ───────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 usage() {
-  echo "Usage: $0 <version>"
-  echo "  e.g.  $0 0.3.0"
+  echo "Usage:"
+  echo "  $0 <version>           # release  (e.g. $0 0.3.0)"
+  echo "  $0 revert <version>    # revert   (e.g. $0 revert 0.3.0)"
   exit 1
 }
 
+validate_version() {
+  if [[ ! "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Error: version must be in X.Y.Z format (e.g. 0.3.0)" >&2
+    exit 1
+  fi
+}
+
+# ── Dispatch ─────────────────────────────────────────────────────────────────
+[[ $# -ge 1 ]] || usage
+
+if [[ "$1" == "revert" ]]; then
+  # ── REVERT MODE ─────────────────────────────────────────────────────────────
+  [[ $# -eq 2 ]] || usage
+  VERSION="$2"
+  validate_version "${VERSION}"
+  TAG="v${VERSION}"
+
+  echo "Reverting release ${TAG}..."
+  echo ""
+
+  # 1. Delete remote tag
+  if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
+    echo "► Deleting remote tag ${TAG}..."
+    git push origin ":refs/tags/${TAG}"
+  else
+    echo "  (remote tag ${TAG} not found — skipping)"
+  fi
+
+  # 2. Delete local tag
+  if git tag | grep -q "^${TAG}$"; then
+    echo "► Deleting local tag ${TAG}..."
+    git tag -d "${TAG}"
+  else
+    echo "  (local tag ${TAG} not found — skipping)"
+  fi
+
+  # 3. Revert the version-bump commit on main
+  # Find the commit that bumped to this version
+  BUMP_COMMIT=$(git log --oneline --all | grep "chore: bump version to ${TAG}" | awk '{print $1}' | head -1)
+  if [[ -z "${BUMP_COMMIT}" ]]; then
+    echo "  Warning: could not find version-bump commit for ${TAG}. Skipping revert commit."
+  else
+    echo "► Reverting version-bump commit (${BUMP_COMMIT})..."
+    git revert --no-edit "${BUMP_COMMIT}"
+    echo "► Pushing main to origin..."
+    git push origin main
+  fi
+
+  echo ""
+  echo "✓ Revert of ${TAG} complete."
+  exit 0
+fi
+
+# ── RELEASE MODE ─────────────────────────────────────────────────────────────
 [[ $# -eq 1 ]] || usage
 VERSION="$1"
 TAG="v${VERSION}"
-
-if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "Error: version must be in X.Y.Z format (e.g. 0.3.0)" >&2
-  exit 1
-fi
+validate_version "${VERSION}"
 
 # ── Snapshot current state ────────────────────────────────────────────────────
 ORIGINAL_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
